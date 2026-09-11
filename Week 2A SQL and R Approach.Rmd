@@ -1,0 +1,51 @@
+---
+title: "Week 2A SQL and R Approach"
+author: "Chanice Mckenzie"
+date: "2026-09-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+For this assignment, I will create a small movie-rating dataset by asking at least five people to rate six recent popular movies on a scale from 1 to 5. The goal is to design a simple relational database that stores information about participants, movies, and individual ratings, and then import the combined data into R for analysis. I am interested in examining which movies are rated most favorably overall and whether differences in individual rating behavior affect the results.
+
+# Planned Approach
+
+I plan to approach the project in three stages: data collection, SQL database design, and analysis in R.
+
+First, I will select six recent popular movies and create a simple survey for at least five participants. Each participant will be asked to rate only the movies they have seen using a scale from 1 to 5, where 1 represents the lowest rating and 5 represents the highest rating. If a participant has not seen a movie, I will treat that response as missing rather than assigning a numerical rating.
+
+Next, I will store the data in a relational SQL database. Rather than placing all information in a single table, I plan to use a normalized structure consisting of three tables:
+
+- `users`, containing a unique identifier for each participant
+- `movies`, containing a unique identifier and title for each movie
+- `ratings`, connecting users and movies and storing the corresponding rating
+
+Primary and foreign keys will be used to maintain the relationships among the tables.
+
+After populating the database, I will use a SQL `JOIN` to combine the information from the three tables. I will then import the query results into R as a dataframe. In R, I plan to inspect the data, evaluate missing ratings, calculate the number of ratings received by each movie, and compute summary statistics such as the average rating for each movie.
+
+# Data Question
+
+The primary data question I want to explore is:
+
+**Which of the six selected movies is rated most favorably by the participants?**
+
+I will also examine how many people rated each movie so that an average rating is interpreted considering the number of responses behind it.
+
+A secondary question will be whether some participants consistently give higher or lower ratings than others. This may help determine whether comparing raw ratings alone is sufficient or whether standardized ratings could provide additional insight.
+
+# Anticipated Data Challenges
+
+One expected challenge is missing data because not every participant will have seen every movie. I do not plan to replace an unseen movie with a rating of zero because zero would incorrectly imply that the participant disliked the movie. Instead, missing ratings will remain `NULL` in SQL and `NA` in R. Summary statistics such as movie averages will therefore be calculated using only observed ratings.
+
+Another limitation is the small sample size. Because the assignment requires only a minimum of five participants, the results will represent the preferences of this small group and should not be generalized to the broader population.
+
+Participant rating behavior may also differ. For example, one person may usually give ratings of 4 or 5 while another may rarely rate a movie above 3. I will initially analyze the original 1–5 ratings because they are easy to interpret. If the data show substantial differences in rating tendencies, I may explore standardizing ratings by participant as an optional extension.
+
+I will also need to make sure that movie titles and participant identifiers are entered consistently so that duplicate records or mismatched values do not affect the SQL joins or subsequent analysis.
+
