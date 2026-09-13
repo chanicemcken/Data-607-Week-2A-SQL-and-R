@@ -1,0 +1,452 @@
+---
+title: "SQL and R – Movie Ratings"
+author: "Chanice McKenzie"
+format:
+  html:
+    toc: true
+    code-fold: false
+execute:
+  warning: false
+  message: false
+---
+
+# Introduction
+
+For this assignment, I will create a small movie-rating dataset by asking at least five people to rate six recent popular movies on a scale from 1 to 5. The goal is to design a simple relational database that stores information about participants, movies, and individual ratings, and then import the combined data into R for analysis. I am interested in examining which movies are rated most favorably overall and whether differences in individual rating behavior affect the results.
+
+# Planned Approach
+
+I plan to approach the project in three stages: data collection, SQL database design, and analysis in R.
+
+First, I will select six recent popular movies and create a simple survey for at least five participants. Each participant will be asked to rate only the movies they have seen using a scale from 1 to 5, where 1 represents the lowest rating and 5 represents the highest rating. If a participant has not seen a movie, I will treat that response as missing rather than assigning a numerical rating.
+
+Next, I will store the data in a relational SQL database. Rather than placing all information in a single table, I plan to use a normalized structure consisting of three tables:
+
+-   `users`, containing a unique identifier for each participant
+-   `movies`, containing a unique identifier and title for each movie
+-   `ratings`, connecting users and movies and storing the corresponding rating
+
+Primary and foreign keys will be used to maintain the relationships among the tables.
+
+After populating the database, I will use a SQL `JOIN` to combine the information from the three tables. I will then import the query results into R as a dataframe. In R, I plan to inspect the data, evaluate missing ratings, calculate the number of ratings received by each movie, and compute summary statistics such as the average rating for each movie.
+
+# Data Question
+
+The primary data question I want to explore is:
+
+**Which of the six selected movies is rated most favorably by the participants?**
+
+I will also examine how many people rated each movie so that an average rating is interpreted considering the number of responses behind it.
+
+A secondary question will be whether some participants consistently give higher or lower ratings than others. This may help determine whether comparing raw ratings alone is sufficient or whether standardized ratings could provide additional insight.
+
+# Anticipated Data Challenges
+
+One expected challenge is missing data because not every participant will have seen every movie. I do not plan to replace an unseen movie with a rating of zero because zero would incorrectly imply that the participant disliked the movie. Instead, missing ratings will remain `NULL` in SQL and `NA` in R. Summary statistics such as movie averages will therefore be calculated using only observed ratings.
+
+Another limitation is the small sample size. Because the assignment requires only a minimum of five participants, the results will represent the preferences of this small group and should not be generalized to the broader population.
+
+Participant rating behavior may also differ. For example, one person may usually give ratings of 4 or 5 while another may rarely rate a movie above 3. I will initially analyze the original 1–5 ratings because they are easy to interpret. If the data show substantial differences in rating tendencies, I may explore standardizing ratings by participant as an optional extension.
+
+I will also need to make sure that movie titles and participant identifiers are entered consistently so that duplicate records or mismatched values do not affect the SQL joins or subsequent analysis.
+
+# Setup
+
+I use SQLite as the relational database for this project because it provides a simple way to create and query a SQL database directly within R without requiring database credentials.
+
+The R packages used are `DBI`, `RSQLite`, `dplyr`, `tidyr`, `ggplot2`, and `knitr`.
+
+```{r}
+# Load packages used for SQL, data manipulation, visualization, and tables
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+```
+
+# Create the SQL Database
+
+```{r}
+# Create an in-memory SQLite database
+con <- dbConnect(RSQLite::SQLite(), ":memory:")
+
+# Turn on foreign key enforcement
+dbExecute(con, "PRAGMA foreign_keys = ON;")
+```
+
+## Create Tables
+
+```{r}
+# Create a table to store participant information
+dbExecute(con, "
+CREATE TABLE users (
+    user_id INTEGER PRIMARY KEY,
+    user_name TEXT NOT NULL
+);
+")
+
+# Create a table to store movie information
+dbExecute(con, "
+CREATE TABLE movies (
+    movie_id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL UNIQUE
+);
+")
+
+# Create the ratings table that connects participants to movies
+dbExecute(con, "
+CREATE TABLE ratings (
+    user_id INTEGER NOT NULL,
+    movie_id INTEGER NOT NULL,
+    rating INTEGER,
+    PRIMARY KEY (user_id, movie_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id),
+    CHECK (rating BETWEEN 1 AND 5 OR rating IS NULL)
+);
+")
+```
+
+The `ratings` table uses a composite primary key consisting of `user_id` and `movie_id`. This prevents the same participant from rating the same movie more than once.
+
+The `CHECK` constraint allows ratings only from 1 through 5 while also allowing `NULL` when a participant has not seen a movie.
+
+# Populate the Database
+
+## Participants
+
+Participant names are not necessary for this analysis, so anonymous identifiers are used.
+
+```{r}
+dbExecute(con, "
+INSERT INTO users (user_id, user_name) VALUES
+    (1, 'Person 1'),
+    (2, 'Person 2'),
+    (3, 'Person 3'),
+    (4, 'Person 4'),
+    (5, 'Person 5');
+")
+```
+
+## Movies
+
+```{r}
+dbExecute(con, "
+INSERT INTO movies (movie_id, title) VALUES
+    (1, 'Spiderman Brand New Day'),
+    (2, 'The Odyssey'),
+    (3, 'Obsession'),
+    (4, 'The Whisper Man'),
+    (5, 'The Dog Stars'),
+    (6, 'Star Wars: The Mandalorian and Grogu');
+")
+```
+
+## Ratings
+
+A `NULL` value is used when a participant did not rate a movie because they had not seen it.
+
+```{r}
+dbExecute(con, "
+INSERT INTO ratings (user_id, movie_id, rating) VALUES
+
+    (1, 1, 5),
+    (1, 2, 5),
+    (1, 3, 4),
+    (1, 4, 2),
+    (1, 5, NULL),
+    (1, 6, NULL),
+
+    (2, 1, 5),
+    (2, 2, 5),
+    (2, 3, 3),
+    (2, 4, 3),
+    (2, 5, NULL),
+    (2, 6, 4),
+
+    (3, 1, 4),
+    (3, 2, 4),
+    (3, 3, 4),
+    (3, 4, 4),
+    (3, 5, 3),
+    (3, 6, NULL),
+
+    (4, 1, 5),
+    (4, 2, NULL),
+    (4, 3, 4),
+    (4, 4, NULL),
+    (4, 5, NULL),
+    (4, 6, 5),
+
+    (5, 1, 4),
+    (5, 2, 5),
+    (5, 3, 5),
+    (5, 4, 3),
+    (5, 5, 3),
+    (5, 6, 4);
+")
+```
+
+# Verify the Database
+
+Before analyzing the data, I confirm that all three tables were created.
+
+```{r}
+dbListTables(con)
+```
+
+I can also inspect the individual tables.
+
+```{r}
+dbGetQuery(con, "SELECT * FROM users;")
+```
+
+```{r}
+dbGetQuery(con, "SELECT * FROM movies;")
+```
+
+```{r}
+dbGetQuery(con, "SELECT * FROM ratings;")
+```
+
+# Combine the SQL Tables
+
+The information needed for the analysis is stored across three tables. I use SQL joins to combine the participant information, movie information, and ratings.
+
+```{r}
+# Join the three SQL tables to create one analysis-ready dataset
+ratings_df <- dbGetQuery(con, "
+SELECT
+    u.user_id,
+    u.user_name,
+    m.movie_id,
+    m.title,
+    r.rating
+FROM ratings AS r
+INNER JOIN users AS u
+    ON r.user_id = u.user_id
+INNER JOIN movies AS m
+    ON r.movie_id = m.movie_id
+ORDER BY u.user_id, m.movie_id;
+")
+```
+
+The result of the SQL query is imported directly into R as a dataframe.
+
+```{r}
+head(ratings_df)
+```
+
+```{r}
+str(ratings_df)
+```
+
+# Data Inspection
+
+The dataset contains five participants and six movies.
+
+```{r}
+# Confirm the number of participants, movies, and possible ratings
+ratings_df |>
+  summarise(
+    participants = n_distinct(user_id),
+    movies = n_distinct(movie_id),
+    possible_ratings = n()
+  )
+```
+
+With five participants and six movies, there are 30 possible ratings.
+
+# Handling Missing Ratings
+
+Some participants had not seen every movie. These responses are stored as `NULL` in SQL and appear as `NA` after the data are imported into R.
+
+I chose not to replace missing ratings with zero because zero is not part of the 1–5 rating scale and would incorrectly imply that the participant watched and strongly disliked the movie.
+
+```{r}
+# Count observed and missing ratings
+ratings_df |>
+  summarise(
+    possible_ratings = n(),
+    observed_ratings = sum(!is.na(rating)),
+    missing_ratings = sum(is.na(rating)),
+    percent_missing = round(mean(is.na(rating)) * 100, 1)
+  )
+```
+
+There are 23 observed ratings and 7 missing ratings, meaning approximately 23.3% of the possible ratings are missing.
+
+## Missing Ratings by Movie
+
+```{r}
+# Count how many ratings each movie received and how many are missing
+missing_by_movie <- ratings_df |>
+  group_by(title) |>
+  summarise(
+    possible_ratings = n(),
+    ratings_received = sum(!is.na(rating)),
+    missing_ratings = sum(is.na(rating)),
+    .groups = "drop"
+  )
+
+kable(
+  missing_by_movie,
+  caption = "Ratings Received and Missing Ratings by Movie"
+)
+```
+
+This information is important because movies with fewer ratings should be interpreted more cautiously.
+
+# Summary Statistics for Movie Ratings
+
+To determine which movie was rated most favorably, I calculate the number of ratings, average rating, median rating, and standard deviation for each movie.
+
+```{r}
+# Calculate summary statistics for each movie
+movie_summary <- ratings_df |>
+  group_by(title) |>
+  summarise(
+    n_ratings = sum(!is.na(rating)),
+    mean_rating = mean(rating, na.rm = TRUE),
+    median_rating = median(rating, na.rm = TRUE),
+    sd_rating = sd(rating, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(desc(mean_rating))
+
+# Save the highest-rated and second-highest-rated movies
+top_movie <- movie_summary |>
+  slice(1)
+
+second_movie <- movie_summary |>
+  slice(2)
+
+kable(
+  movie_summary,
+  digits = 2,
+  caption = "Summary Statistics for Movie Ratings"
+)
+```
+
+The highest-rated movie was **`r top_movie$title`**, with an average rating of **`r round(top_movie$mean_rating, 2)` out of 5**, based on **`r top_movie$n_ratings` ratings**.
+
+**`r second_movie$title` ranked second with an average rating of `r round(second_movie$mean_rating, 2)` and was rated by `r second_movie$n_ratings` participants.**
+
+Although *The Odyssey* has the highest average rating, it received four ratings rather than five. *Spiderman Brand New Day* has a slightly lower average of 4.60 but was rated by all five participants.
+
+# Average Movie Ratings
+
+```{r}
+# Create a bar chart comparing average ratings by movie
+movie_summary |>
+  ggplot(
+    aes(
+      x = reorder(title, mean_rating),
+      y = mean_rating
+    )
+  ) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Average Rating by Movie",
+    subtitle = "Ratings were collected on a 1–5 scale",
+    x = "Movie",
+    y = "Average Rating"
+  ) +
+  ylim(0, 5) +
+  theme_minimal()
+```
+
+The visualization makes it easier to compare the average rating for each movie.
+
+# Rating Distribution
+
+Average ratings alone may hide differences in how individual participants rated movies. I therefore examine the overall distribution of the observed ratings.
+
+```{r}
+# Create a bar chart comparing distribution of movie ratings
+ratings_df |>
+  filter(!is.na(rating)) |>
+  ggplot(aes(x = factor(rating))) +
+  geom_bar() +
+  labs(
+    title = "Distribution of Movie Ratings",
+    x = "Rating",
+    y = "Number of Ratings"
+  ) +
+  theme_minimal()
+```
+
+The distribution provides additional context about whether responses tended to be positive, negative, or more evenly distributed.
+
+# Participant Rating Behavior
+
+Different participants may use the rating scale differently. I calculate each participant's average rating and the number of movies they rated.
+
+```{r}
+# Compare rating behavior across participants
+user_summary <- ratings_df |>
+  group_by(user_name) |>
+  summarise(
+    movies_rated = sum(!is.na(rating)),
+    average_rating = mean(rating, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+kable(
+  user_summary,
+  digits = 2,
+  caption = "Participant Rating Behavior"
+)
+```
+
+Most participants have similar average ratings, although Person 4 has a higher average. However, Person 4 also rated only three movies, so that average is based on fewer observations.
+
+# User-Item Matrix
+
+Movie-rating data can also be represented as a user-item matrix, where rows represent users and columns represent movies.
+
+```{r}
+# Reshape the data so participants are rows and movies are columns
+ratings_matrix <- ratings_df |>
+  select(user_name, title, rating) |>
+  pivot_wider(
+    names_from = title,
+    values_from = rating
+  )
+
+kable(
+  ratings_matrix,
+  caption = "User-Movie Rating Matrix"
+)
+```
+
+This structure resembles the type of data that could later be used for collaborative-filtering recommendation systems. The missing cells represent movies that participants did not rate.
+
+# Conclusions
+
+The analysis found that **`r top_movie$title` received the highest average rating at `r round(top_movie$mean_rating, 2)` out of 5**, based on **`r top_movie$n_ratings` participant ratings**.
+
+**`r second_movie$title` ranked second with an average rating of `r round(second_movie$mean_rating, 2)` and was rated by `r second_movie$n_ratings` participants.**
+
+*Star Wars: The Mandalorian and Grogu* had an average rating of approximately 4.33, while *Obsession* averaged 4.00. *The Whisper Man* and *The Dog Stars* both had average ratings of 3.00.
+
+The number of ratings is important when interpreting these results. For example, *The Dog Stars* received only two ratings, while *Spiderman Brand New Day* and *Obsession* were rated by all five participants. Therefore, an average based on two observations provides less information about the group's overall preference than one based on five observations.
+
+Missing ratings were maintained as `NULL` in SQL and `NA` in R. This approach preserves the difference between a movie that was not seen and a movie that received a low rating.
+
+The participant-level results suggest relatively similar rating behavior among most respondents, with average ratings around 4.0. Person 4 had the highest individual average at approximately 4.67, although this participant rated only three movies.
+
+Overall, **The Odyssey appears to be the most favorably rated movie in this sample**, while *Spiderman Brand New Day* provides the strongest combination of a high average rating and complete participation.
+
+#### Recommendations
+
+A useful next step would be to collect ratings from a larger number of participants. A larger sample would make the movie averages more reliable and reduce the effect that one participant could have on the results. I could also collect additional information such as movie genre or participant viewing preferences to determine whether certain types of movies are rated more favorably. Finally, the analysis could be updated as more ratings are collected. Because the SQL database separates users, movies, and ratings into related tables, new participants, movies, and ratings can be added without redesigning the database.
+
+# Close Database Connection
+
+```{r}
+dbDisconnect(con)
+```
